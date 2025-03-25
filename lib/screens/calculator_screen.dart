@@ -18,8 +18,9 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
     '√', 'log', '^', 'C',
     '7', '8', '9', '÷', 
     '4', '5', '6', '×', 
-    '1', '2', '3', '−',
-    '⌫', '0', '=', '+'
+    '1', '2', '3', '−', 
+    '⌫', '0', '.', '+',
+    '(', ')', '%', '='
   ];
 
   @override
@@ -40,35 +41,30 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
         }
       } else if (value == "=") {
         try {
-          result = evalExpression(input);
-          historyBox.add(HistoryModel(operation: input, result: result));
-          input = result;
+          if (input.isNotEmpty) {
+            result = evalExpression(input);
+
+            // Cek apakah input mengandung operator
+            if (result != "Error" && RegExp(r'[+\-×÷^]').hasMatch(input)) {
+              historyBox.add(HistoryModel(operation: input, result: result));
+            }
+
+            input = result;
+          }
         } catch (e) {
           result = "Error";
         }
       } else if (value == "√") {
-        if (input.isNotEmpty) {
-          input = "sqrt($input)";
-          result = evalExpression(input);
-        }
+        input += "√(";
       } else if (value == "log") {
-        if (input.isNotEmpty) {
-          input = "log($input)";
-          result = evalExpression(input);
-        }
-      } else if (value == "^") {
-        if (input.isNotEmpty) {
-          input += "^";  // Menambah operator pangkat
-        }
+        input += "log(";
       } else {
-        if (input.isEmpty && (value == "÷" || value == "×" || value == "+")) return;
-
-        // Gunakan simbol estetis yang dikonversi sebelum evaluasi
-        if (value == "−") value = "-";
-        if (value == "÷") value = "/";
-        if (value == "×") value = "*";
-
-        input += value;
+        // Tangani kasus angka negatif di awal
+        if (input.isEmpty && value == "−") {
+          input = "-";
+        } else {
+          input += value;
+        }
         result = evalExpression(input);
       }
     });
@@ -77,26 +73,43 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
   String evalExpression(String expression) {
     try {
       if (expression.isEmpty) return "0";
-      if ("+-*/^".contains(expression[expression.length - 1])) return "Error"; // Cegah operator di akhir
 
-      // Ganti simbol estetis dengan yang dapat diproses oleh Math Expressions
-      expression = expression.replaceAll("−", "-");
-      expression = expression.replaceAll("÷", "/");
-      expression = expression.replaceAll("×", "*");
-      expression = expression.replaceAll("√", "sqrt");
+      // Cek apakah ekspresi diakhiri dengan operator (tidak valid)
+      if (RegExp(r'[+\-×÷^]$').hasMatch(expression)) return "Error";
 
-      // Perbaiki log(x) agar tidak merusak ekspresi lain
+      // Perbaiki ekspresi sebelum dievaluasi
+      expression = expression
+          .replaceAll("×", "*")
+          .replaceAll("÷", "/")
+          .replaceAllMapped(
+              RegExp(r'(\d+)%'), (match) => "(${match.group(1)}/100)")
+          .replaceAll("√", "sqrt")
+          .replaceAll("−", "-")
+          .replaceAllMapped(
+              RegExp(r'log\(([^)]+)\)'),
+              (match) => "(ln(${match.group(1)}))/ln(10)");
+
+      // 🔹 Tangani input angka tanpa operator, langsung return
+      if (RegExp(r'^\d+(\.\d+)?$').hasMatch(expression)) return expression;
+
+      // 🔹 Perbaiki angka negatif di awal ekspresi
+      if (expression.startsWith('-')) {
+        expression = "0$expression";
+      }
+
+      // 🔹 Perbaiki angka negatif dalam tanda kurung
       expression = expression.replaceAllMapped(
-        RegExp(r'log\(([^)]+)\)'), 
-        (match) => "(ln(${match.group(1)}))/ln(10)"
+          RegExp(r'\((-\d+)\)'), (match) => "(0${match.group(1)})"
       );
 
       Parser p = Parser();
       Expression exp = p.parse(expression);
       ContextModel cm = ContextModel();
+
       double evalResult = exp.evaluate(EvaluationType.REAL, cm);
 
-      return evalResult.toStringAsFixed(evalResult.truncateToDouble() == evalResult ? 0 : 2);
+      // Format hasil agar tidak ada nol berlebihan setelah desimal
+      return evalResult.toString().replaceAll(RegExp(r'\.0+$'), '');
     } catch (e) {
       return "Error";
     }
@@ -138,13 +151,13 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
                         var item = box.getAt(index);
                         return ListTile(
                           title: Text("${item?.operation} = ${item?.result}"),
-                          onLongPress: () => deleteHistory(index), // Hapus dengan tekan lama
+                          onLongPress: () => deleteHistory(index),
                           onTap: () {
                             setState(() {
-                              input = item?.operation ?? ""; // Hanya operasi tanpa hasil
-                              result = evalExpression(input); // Preview hasil otomatis diperbarui
+                              input = item?.operation ?? "";
+                              result = evalExpression(input);
                             });
-                            Navigator.pop(context); // Tutup modal setelah memilih history
+                            Navigator.pop(context);
                           },
                         );
                       },
@@ -163,7 +176,7 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Flutter Calculator"),
+        title: const Text("Calculator"),
         actions: [
           IconButton(
             icon: const Icon(Icons.history),
@@ -173,75 +186,96 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
       ),
       body: Column(
         children: [
-          // History (3 history terakhir)
-          Container(
-            height: 100, // Tentukan tinggi agar tidak terlalu besar
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          // **History (4 history terakhir)**
+          SizedBox(
+            width: double.infinity,
             child: ValueListenableBuilder(
               valueListenable: historyBox.listenable(),
               builder: (context, Box<HistoryModel> box, _) {
-                if (box.isEmpty) {
-                  return const Center(child: Text("No history yet"));
-                }
-                return ListView.builder(
-                  itemCount: box.length < 3 ? box.length : 3, // Tampilkan max 3 history terakhir
-                  itemBuilder: (context, index) {
-                    var item = box.getAt(box.length - 1 - index); // Ambil dari yang terbaru
-                    return Text(
-                      "${item?.operation} = ${item?.result}",
-                      style: const TextStyle(fontSize: 16, color: Colors.grey),
-                      textAlign: TextAlign.right,
-                    );
-                  },
+                List<HistoryModel> recentHistory =
+                    box.values.toList().reversed.take(4).toList();
+
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  mainAxisSize: MainAxisSize.min, // **Supaya tidak memaksa ukuran besar**
+                  children: recentHistory.isNotEmpty
+                      ? recentHistory.map((item) {
+                          return Text(
+                            "${item.operation} = ${item.result}",
+                            style: const TextStyle(fontSize: 18, color: Colors.grey),
+                            textAlign: TextAlign.right,
+                          );
+                        }).toList()
+                      : [const Text("No history yet", style: TextStyle(fontSize: 18, color: Colors.grey))],
                 );
               },
             ),
           ),
-          // Preview hasil (sebelum `=` ditekan)
+
+          // **Hasil perhitungan (Sedikit ke bawah)**
+          const SizedBox(height: 20), // Tambah jarak ke bawah
           Container(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.symmetric(horizontal: 16),
             alignment: Alignment.bottomRight,
             child: Text(
               result,
-              style: const TextStyle(fontSize: 24, color: Colors.grey),
+              style: const TextStyle(fontSize: 28, color: Colors.black),
             ),
           ),
 
-          // Input yang sedang diketik
+          // **Input ekspresi yang sedang diketik**
           Container(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             alignment: Alignment.bottomRight,
             child: Text(
               input,
-              style: const TextStyle(fontSize: 32, fontWeight: FontWeight.bold),
+              style: const TextStyle(fontSize: 36, fontWeight: FontWeight.bold),
             ),
           ),
 
-          const Spacer(), // Spacer agar tombol tetap di bawah
-          // Grid tombol
+          const SizedBox(height: 20), // Tambah jarak ke tombol
 
-          Container(
-            padding: const EdgeInsets.all(8),
-            child: GridView.builder(
-              shrinkWrap: true, // Penting agar tidak mengambil seluruh layar
-              physics: const NeverScrollableScrollPhysics(), // Matikan scroll agar tetap di bawah
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 4,
-                crossAxisSpacing: 8,
-                mainAxisSpacing: 8,
-                childAspectRatio: 1.2,
+          // **Grid tombol kalkulator**
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.all(8),
+              child: GridView.builder(
+                physics: const NeverScrollableScrollPhysics(), // Nonaktifkan scroll agar tidak bentrok
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 4, // 4 colomn
+                  crossAxisSpacing: 10,
+                  mainAxisSpacing: 10,
+                  childAspectRatio: 1.3, // Perbesar tombol sedikit
+                ),
+                itemCount: buttons.length,
+                itemBuilder: (context, index) {
+                  String buttonText = buttons[index];
+
+                  return TextButton(
+                    onPressed: () => onButtonClick(buttonText),
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.all(12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                       backgroundColor: buttonText == '⌫' ? Colors.orange : Colors.grey[200], // Warna khusus untuk '⌫'
+                    ),
+                    child: Text(
+                      buttonText,
+                      style: TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
+                        color: buttonText == '⌫' ? Colors.white : Colors.black
+                      ),
+                    ),
+                  );
+                },
               ),
-              itemCount: buttons.length,
-              itemBuilder: (context, index) {
-                return ElevatedButton(
-                  onPressed: () => onButtonClick(buttons[index]),
-                  child: Text(buttons[index], style: const TextStyle(fontSize: 24)),
-                );
-              },
             ),
           ),
         ],
-      )
+      ),
     );
   }
 }
+  
